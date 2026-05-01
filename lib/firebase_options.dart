@@ -54,6 +54,7 @@ class DefaultFirebaseOptions {
     appId: '1:954600539446:android:4d7285b9dfa0191e98df97',
     messagingSenderId: '954600539446',
     projectId: 'mobile-final-3838c',
+    databaseURL: 'https://mobile-final-3838c-default-rtdb.firebaseio.com',
     storageBucket: 'mobile-final-3838c.firebasestorage.app',
   );
 
