@@ -17,19 +17,20 @@ import '../screens/settings_screen.dart';
 final appRouter = GoRouter(
   initialLocation: '/',
   redirect: (context, state) {
+    // Only redirect away from splash if trying to access protected routes
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final isLoggedIn = authProvider.isLoggedIn;
-    final isOnAuthScreen = state.matchedLocation == '/login' ||
-        state.matchedLocation == '/signup' ||
-        state.matchedLocation == '/';
+    final location = state.matchedLocation;
 
-    // If not logged in and trying to access a protected screen → go to login
-    if (!isLoggedIn && !isOnAuthScreen) return '/login';
+    // Never redirect away from splash or auth screens
+    if (location == '/' || location == '/login' || location == '/signup') {
+      return null;
+    }
 
-    // If logged in and on auth screen → go to home
-    if (isLoggedIn && isOnAuthScreen) return '/home';
+    // If trying to access protected screen without login → go to login
+    if (!isLoggedIn) return '/login';
 
-    return null; // No redirect needed
+    return null;
   },
   routes: [
     GoRoute(
