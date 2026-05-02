@@ -71,7 +71,7 @@ class _SignupScreenState extends State<SignupScreen> {
     if (error != null) {
       setState(() => _errorMessage = error);
     } else {
-      if (mounted) context.go('/home');
+      if (mounted) context.go('/login');
     }
   }
 

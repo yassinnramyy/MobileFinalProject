@@ -20,7 +20,6 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
 
-    // Setup animations
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
@@ -36,9 +35,13 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    // Navigate after 3 seconds
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) _checkAuthAndNavigate();
+    // Check auth THEN navigate
+    Future.delayed(const Duration(seconds: 3), () async {
+      if (mounted) {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        await authProvider.checkCurrentUser(); // ← wait for this to finish
+        if (mounted) _checkAuthAndNavigate();
+      }
     });
   }
 
