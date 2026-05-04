@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -10,6 +9,7 @@ import '../screens/add_task_screen.dart';
 import '../screens/task_detail_screen.dart';
 import '../screens/courses_screen.dart';
 import '../screens/add_course_screen.dart';
+import '../screens/course_detail_screen.dart';
 import '../screens/calendar_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/settings_screen.dart';
@@ -63,6 +63,13 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/courses',
       builder: (context, state) => const CoursesScreen(),
+    ),
+    GoRoute(
+      path: '/course/:id',
+      builder: (context, state) {
+        final courseId = state.pathParameters['id']!;
+        return CourseDetailScreen(courseId: courseId);
+      },
     ),
     GoRoute(
       path: '/add-course',

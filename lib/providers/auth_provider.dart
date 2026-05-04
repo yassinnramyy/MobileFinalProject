@@ -27,8 +27,8 @@ class AuthProvider extends ChangeNotifier {
     _setLoading(true);
     final online = await _connectivity.isOnline();
 
-    if (online) {
-      try {
+    try {
+      if (online) {
         // Create user in Firebase Auth
         final credential = await _auth.createUserWithEmailAndPassword(
           email: email,
@@ -53,27 +53,27 @@ class AuthProvider extends ChangeNotifier {
         await _db.insertUser(user);
 
         _currentUser = user;
-        _setLoading(false);
         notifyListeners();
         return null; // null means success
-
-      } on FirebaseAuthException catch (e) {
-        _setLoading(false);
-        return _handleFirebaseError(e.code);
+      } else {
+        // Offline signup — save locally only
+        final user = UserModel(
+          id: const Uuid().v4(), // Generate a random ID
+          name: name,
+          email: email,
+          password: password,
+        );
+        await _db.insertUser(user);
+        _currentUser = user;
+        notifyListeners();
+        return null;
       }
-    } else {
-      // Offline signup — save locally only
-      final user = UserModel(
-        id: const Uuid().v4(), // Generate a random ID
-        name: name,
-        email: email,
-        password: password,
-      );
-      await _db.insertUser(user);
-      _currentUser = user;
+    } on FirebaseAuthException catch (e) {
+      return _handleFirebaseError(e.code);
+    } catch (e) {
+      return 'An unexpected error occurred. Please try again.';
+    } finally {
       _setLoading(false);
-      notifyListeners();
-      return null;
     }
   }
 
@@ -84,8 +84,8 @@ class AuthProvider extends ChangeNotifier {
     _setLoading(true);
     final online = await _connectivity.isOnline();
 
-    if (online) {
-      try {
+    try {
+      if (online) {
         // Login with Firebase Auth
         final credential = await _auth.signInWithEmailAndPassword(
           email: email,
@@ -109,26 +109,25 @@ class AuthProvider extends ChangeNotifier {
         await _db.insertUser(user);
 
         _currentUser = user;
-        _setLoading(false);
         notifyListeners();
         return null; // null means success
-
-      } on FirebaseAuthException catch (e) {
-        _setLoading(false);
-        return _handleFirebaseError(e.code);
-      }
-    } else {
-      // Offline login — check local database
-      final user = await _db.getUser(email, password);
-      if (user != null) {
-        _currentUser = user;
-        _setLoading(false);
-        notifyListeners();
-        return null;
       } else {
-        _setLoading(false);
-        return 'No internet connection and user not found locally.';
+        // Offline login — check local database
+        final user = await _db.getUser(email, password);
+        if (user != null) {
+          _currentUser = user;
+          notifyListeners();
+          return null;
+        } else {
+          return 'No internet connection and user not found locally.';
+        }
       }
+    } on FirebaseAuthException catch (e) {
+      return _handleFirebaseError(e.code);
+    } catch (e) {
+      return 'An unexpected error occurred. Please try again.';
+    } finally {
+      _setLoading(false);
     }
   }
 

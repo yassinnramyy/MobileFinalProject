@@ -275,8 +275,7 @@ class _CoursesScreenState extends State<CoursesScreen> {
                         course: course,
                         icon: _iconData(course.icon),
                         onTap: () {
-                          // Navigate to course detail / tasks filtered by course
-                          // context.push('/course/${course.id}');
+                          context.push('/course/${course.id}');
                         },
                         onLongPress: () => _deleteCourse(course),
                       );
@@ -328,7 +327,7 @@ class _CourseCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withOpacity(0.06),
+                color: Colors.black.withValues(alpha: 0.06),
                 blurRadius: 10,
                 offset: const Offset(0, 4))
           ],
@@ -342,7 +341,7 @@ class _CourseCard extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon, color: color, size: 24),
