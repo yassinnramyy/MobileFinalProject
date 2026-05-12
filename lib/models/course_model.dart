@@ -43,4 +43,16 @@ class Course {
 
   // Get the actual Color object from stored integer
   Color get courseColor => Color(color);
+
+  // Create a copy with optional overrides
+  Course copyWith({int? taskCount}) {
+    return Course(
+      id: id,
+      name: name,
+      color: color,
+      icon: icon,
+      userId: userId,
+      taskCount: taskCount ?? this.taskCount,
+    );
+  }
 }
