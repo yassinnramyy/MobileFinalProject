@@ -35,6 +35,18 @@ class FirestoreService {
     await _db.collection('tasks').doc(taskId).delete();
   }
 
+  // Delete all tasks for a course
+  Future<void> deleteTasksByCourse(String userId, String courseId) async {
+    final snapshot = await _db
+        .collection('tasks')
+        .where('userId', isEqualTo: userId)
+        .where('courseId', isEqualTo: courseId)
+        .get();
+    for (final doc in snapshot.docs) {
+      await _db.collection('tasks').doc(doc.id).delete();
+    }
+  }
+
   // =====================
   // COURSE OPERATIONS
   // =====================

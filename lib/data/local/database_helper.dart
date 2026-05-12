@@ -157,6 +157,16 @@ class DatabaseHelper {
     );
   }
 
+  // Delete all tasks for a specific course
+  Future<void> deleteTasksByCourse(String courseId) async {
+    final db = await database;
+    await db.delete(
+      'tasks',
+      where: 'courseId = ?',
+      whereArgs: [courseId],
+    );
+  }
+
   // =====================
   // COURSE OPERATIONS
   // =====================

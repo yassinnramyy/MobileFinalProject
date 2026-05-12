@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../providers/auth_provider.dart';
-import '../core/connectivity_service.dart';
-import '../data/local/database_helper.dart';
+import '../providers/task_provider.dart';
 import '../models/task_model.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -15,113 +13,35 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _db = DatabaseHelper.instance;
-  final _firestore = FirebaseFirestore.instance;
-  final _connectivity = ConnectivityService();
-
-  List<Task> _todayTasks = [];
-  int _totalTasks = 0;
-  int _completedTasks = 0;
-  bool _isLoading = true;
+  bool _didInit = false;
 
   @override
   void initState() {
     super.initState();
-    _loadTasks();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initProvider());
   }
 
-  Future<void> _loadTasks() async {
+  Future<void> _initProvider() async {
+    if (_didInit) return;
     final user = context.read<AuthProvider>().currentUser;
     if (user == null) return;
-
-    setState(() => _isLoading = true);
-
-    final online = await _connectivity.isOnline();
-
-    if (online) {
-      try {
-        // Fetch all tasks from Firestore
-        final snapshot = await _firestore
-            .collection('tasks')
-            .where('userId', isEqualTo: user.id)
-            .get();
-
-        final allTasks =
-        snapshot.docs.map((d) => _taskFromFirestore(d)).toList();
-
-        // Sync to local
-        for (final t in allTasks) {
-          await _db.insertTask(t);
-        }
-
-        _processTasks(allTasks);
-      } catch (_) {
-        await _loadFromLocal(user.id);
-      }
-    } else {
-      await _loadFromLocal(user.id);
-    }
-
-    setState(() => _isLoading = false);
+    _didInit = true;
+    await context.read<TaskProvider>().init(user.id);
   }
 
-  Future<void> _loadFromLocal(String userId) async {
-    final allTasks = await _db.getTasks(userId);
-    _processTasks(allTasks);
-  }
-
-  void _processTasks(List<Task> allTasks) {
+  List<Task> _todayTasks(List<Task> tasks) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
-
-    final todayTasks = allTasks
+    return tasks
         .where((t) =>
-    t.dueDate.isAfter(today.subtract(const Duration(seconds: 1))) &&
-        t.dueDate.isBefore(tomorrow))
+            t.dueDate.isAfter(today.subtract(const Duration(seconds: 1))) &&
+            t.dueDate.isBefore(tomorrow))
         .toList();
-
-    setState(() {
-      _todayTasks = todayTasks;
-      _totalTasks = allTasks.length;
-      _completedTasks = allTasks.where((t) => t.isCompleted).length;
-    });
-  }
-
-  Task _taskFromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return Task(
-      id: doc.id,
-      title: data['title'] ?? '',
-      description: data['description'] ?? '',
-      courseId: data['courseId'] ?? '',
-      courseName: data['courseName'] ?? '',
-      dueDate: (data['dueDate'] as Timestamp).toDate(),
-      priority: data['priority'] ?? 'low',
-      isCompleted: data['isCompleted'] ?? false,
-      userId: data['userId'] ?? '',
-    );
   }
 
   Future<void> _toggleTask(Task task) async {
-    final newStatus = !task.isCompleted;
-    final online = await _connectivity.isOnline();
-
-    // Update local
-    await _db.updateTaskStatus(task.id, newStatus);
-
-    // Update Firestore if online
-    if (online) {
-      await _firestore
-          .collection('tasks')
-          .doc(task.id)
-          .update({'isCompleted': newStatus});
-    }
-
-    setState(() {
-      task.isCompleted = newStatus;
-      _completedTasks = _todayTasks.where((t) => t.isCompleted).length;
-    });
+    await context.read<TaskProvider>().toggleTaskCompletion(task.id);
   }
 
   String _greeting() {
@@ -149,154 +69,163 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final user = context.watch<AuthProvider>().currentUser;
     final name = user?.name.split(' ').first ?? 'User';
+    final taskProvider = context.watch<TaskProvider>();
+    final todayTasks = _todayTasks(taskProvider.tasks);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       body: SafeArea(
-        child: _isLoading
+        child: taskProvider.isLoading
             ? const Center(child: CircularProgressIndicator())
             : RefreshIndicator(
-          onRefresh: _loadTasks,
-          child: CustomScrollView(
-            slivers: [
-              // ── Header ──────────────────────────────────
-              SliverToBoxAdapter(
-                child: Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 16),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.menu,
-                            color: Color(0xFF4361EE)),
-                        onPressed: () {},
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          '${_greeting()}, $name 👋',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF4361EE),
-                          ),
+                onRefresh: () => context.read<TaskProvider>().loadTasks(),
+                child: CustomScrollView(
+                  slivers: [
+                    // ── Header ──────────────────────────────────
+                    SliverToBoxAdapter(
+                      child: Container(
+                        color: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 16),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.menu,
+                                  color: Color(0xFF4361EE)),
+                              onPressed: () {},
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                '${_greeting()}, $name 👋',
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF4361EE),
+                                ),
+                              ),
+                            ),
+                            CircleAvatar(
+                              radius: 20,
+                              backgroundColor: const Color(0xFF4361EE),
+                              child: Text(
+                                name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor: const Color(0xFF4361EE),
-                        child: Text(
-                          name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ── Stats Row ────────────────────────────────
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Row(
-                    children: [
-                      _StatCard(
-                          label: 'Total\nTasks',
-                          value: _totalTasks,
-                          color: const Color(0xFF4361EE)),
-                      const SizedBox(width: 12),
-                      _StatCard(
-                          label: 'Due Today',
-                          value: _todayTasks
-                              .where((t) => !t.isCompleted)
-                              .length,
-                          color: const Color(0xFFF72585)),
-                      const SizedBox(width: 12),
-                      _StatCard(
-                          label: 'Completed',
-                          value: _completedTasks,
-                          color: const Color(0xFF4CC9F0)),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ── Today's Tasks Header ─────────────────────
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        "Today's Tasks",
-                        style: TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
-                      TextButton(
-                        onPressed: () => context.push('/calendar'),
-                        child: const Text('View All',
-                            style: TextStyle(color: Color(0xFF4361EE))),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ── Task List ────────────────────────────────
-              _todayTasks.isEmpty
-                  ? SliverToBoxAdapter(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(40),
-                    child: Column(
-                      children: [
-                        Icon(Icons.check_circle_outline,
-                            size: 64,
-                            color: Colors.grey.shade300),
-                        const SizedBox(height: 12),
-                        Text('No tasks for today!',
-                            style: TextStyle(
-                                color: Colors.grey.shade500,
-                                fontSize: 16)),
-                      ],
                     ),
-                  ),
-                ),
-              )
-                  : SliverList(
-                delegate: SliverChildBuilderDelegate(
-                      (context, i) {
-                    final task = _todayTasks[i];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 6),
-                      child: _TaskCard(
-                        task: task,
-                        dueLabel: _formatDueTime(task),
-                        onToggle: () => _toggleTask(task),
-                        onTap: () =>
-                            context.push('/task/${task.id}'),
+
+                    // ── Stats Row ────────────────────────────────
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: StreamBuilder<Map<String, int>>(
+                          stream: taskProvider.listenToStats(),
+                          builder: (context, snapshot) {
+                            final stats = snapshot.data ?? {};
+                            final total = stats['total'] ?? taskProvider.totalTasks;
+                            final dueToday = stats['dueToday'] ?? taskProvider.dueTodayTasks;
+                            final completed = stats['completed'] ?? taskProvider.completedTasks;
+                            return Row(
+                              children: [
+                                _StatCard(
+                                    label: 'Total\nTasks',
+                                    value: total,
+                                    color: const Color(0xFF4361EE)),
+                                const SizedBox(width: 12),
+                                _StatCard(
+                                    label: 'Due Today',
+                                    value: dueToday,
+                                    color: const Color(0xFFF72585)),
+                                const SizedBox(width: 12),
+                                _StatCard(
+                                    label: 'Completed',
+                                    value: completed,
+                                    color: const Color(0xFF4CC9F0)),
+                              ],
+                            );
+                          },
+                        ),
                       ),
-                    );
-                  },
-                  childCount: _todayTasks.length,
+                    ),
+
+                    // ── Today's Tasks Header ─────────────────────
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              "Today's Tasks",
+                              style: TextStyle(
+                                  fontSize: 22, fontWeight: FontWeight.bold),
+                            ),
+                            TextButton(
+                              onPressed: () => context.push('/calendar'),
+                              child: const Text('View All',
+                                  style: TextStyle(color: Color(0xFF4361EE))),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // ── Task List ────────────────────────────────
+                    todayTasks.isEmpty
+                        ? SliverToBoxAdapter(
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(40),
+                                child: Column(
+                                  children: [
+                                    Icon(Icons.check_circle_outline,
+                                        size: 64,
+                                        color: Colors.grey.shade300),
+                                    const SizedBox(height: 12),
+                                    Text('No tasks for today!',
+                                        style: TextStyle(
+                                            color: Colors.grey.shade500,
+                                            fontSize: 16)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          )
+                        : SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, i) {
+                                final task = todayTasks[i];
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 20, vertical: 6),
+                                  child: _TaskCard(
+                                    task: task,
+                                    dueLabel: _formatDueTime(task),
+                                    onToggle: () => _toggleTask(task),
+                                    onTap: () =>
+                                        context.push('/task/${task.id}'),
+                                  ),
+                                );
+                              },
+                              childCount: todayTasks.length,
+                            ),
+                          ),
+
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  ],
                 ),
               ),
-
-              const SliverToBoxAdapter(child: SizedBox(height: 100)),
-            ],
-          ),
-        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           await context.push('/add-task');
-          _loadTasks();
+          await context.read<TaskProvider>().loadTasks();
         },
         backgroundColor: const Color(0xFF4361EE),
         child: const Icon(Icons.add, color: Colors.white, size: 28),

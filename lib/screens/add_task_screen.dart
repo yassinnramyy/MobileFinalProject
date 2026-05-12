@@ -1,14 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 
-import '../providers/auth_provider.dart';
-import '../data/local/database_helper.dart';
-import '../models/task_model.dart';
+import '../providers/task_provider.dart';
 import '../models/course_model.dart';
-import '../core/connectivity_service.dart';
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({super.key});
@@ -20,53 +15,12 @@ class AddTaskScreen extends StatefulWidget {
 class _AddTaskScreenState extends State<AddTaskScreen> {
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
-  final _db = DatabaseHelper.instance;
-  final _firestore = FirebaseFirestore.instance;
-  final _connectivity = ConnectivityService();
 
-  List<Course> _courses = [];
   String? _selectedCourseId;
   String _priority = 'medium';
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
   bool _isSaving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCourses();
-  }
-
-  Future<void> _loadCourses() async {
-    final user = context.read<AuthProvider>().currentUser;
-    if (user == null) return;
-    final online = await _connectivity.isOnline();
-    try {
-      if (online) {
-        final snap = await _firestore
-            .collection('courses')
-            .where('userId', isEqualTo: user.id)
-            .get();
-        final docs = snap.docs
-            .map((d) => Course(
-                  id: d.id,
-                  name: d.data()['name'] ?? '',
-                  color: d.data()['color'] ?? 0xFF4361EE,
-                  icon: d.data()['icon'] ?? 'book',
-                  userId: d.data()['userId'] ?? '',
-                  taskCount: d.data()['taskCount'] ?? 0,
-                ))
-            .toList();
-        setState(() => _courses = docs);
-      } else {
-        final local = await _db.getCourses(user.id);
-        setState(() => _courses = local);
-      }
-    } catch (_) {
-      final local = await _db.getCourses(user.id);
-      setState(() => _courses = local);
-    }
-  }
 
   Future<void> _pickDate() async {
     final now = DateTime.now();
@@ -94,8 +48,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   }
 
   Future<void> _saveTask() async {
-    final user = context.read<AuthProvider>().currentUser;
-    if (user == null) return;
     if (_titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please enter a title')));
@@ -105,45 +57,21 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     if (!mounted) return;
     setState(() => _isSaving = true);
 
-    final id = const Uuid().v4();
     final due = _composeDateTime();
-    final course = _courses.firstWhere(
+    final courses = context.read<TaskProvider>().courses;
+    final course = courses.firstWhere(
         (c) => c.id == (_selectedCourseId ?? ''),
         orElse: () => Course(
             id: '', name: '', color: 0xFF4361EE, icon: 'book', userId: ''));
 
-    final task = Task(
-      id: id,
-      title: _titleController.text.trim(),
-      description: _descController.text.trim(),
-      courseId: course.id,
-      courseName: course.name,
-      dueDate: due,
-      priority: _priority,
-      userId: user.id,
-    );
-
-    // Save locally
-    await _db.insertTask(task);
-
-    // Save to Firestore if online
-    final online = await _connectivity.isOnline();
-    if (online) {
-      try {
-        await _firestore.collection('tasks').doc(id).set({
-          'title': task.title,
-          'description': task.description,
-          'courseId': task.courseId,
-          'courseName': task.courseName,
-          'dueDate': Timestamp.fromDate(task.dueDate),
-          'priority': task.priority,
-          'isCompleted': task.isCompleted,
-          'userId': task.userId,
-        });
-      } catch (_) {
-        // ignore — we already saved locally
-      }
-    }
+    await context.read<TaskProvider>().addTask(
+          title: _titleController.text.trim(),
+          description: _descController.text.trim(),
+          courseId: course.id,
+          courseName: course.name,
+          dueDate: due,
+          priority: _priority,
+        );
 
     if (!mounted) return;
     setState(() => _isSaving = false);
@@ -152,6 +80,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final courses = context.watch<TaskProvider>().courses;
     final dateLabel = _selectedDate == null
         ? 'mm/dd/yyyy'
         : DateFormat.yMMMd().format(_selectedDate!);
@@ -219,7 +148,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       initialValue: _selectedCourseId,
-                      items: _courses
+                      items: courses
                           .map((c) => DropdownMenuItem(
                                 value: c.id,
                                 child: Text(c.name.isEmpty ? 'Unnamed' : c.name),

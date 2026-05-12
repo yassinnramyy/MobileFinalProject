@@ -1,10 +1,9 @@
+import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../providers/auth_provider.dart';
-import '../core/connectivity_service.dart';
-import '../data/local/database_helper.dart';
+import 'package:table_calendar/table_calendar.dart';
+import '../providers/task_provider.dart';
 import '../models/task_model.dart';
 import 'home_screen.dart'; // re-use shared bottom nav
 
@@ -16,114 +15,25 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  final _db = DatabaseHelper.instance;
-  final _firestore = FirebaseFirestore.instance;
-  final _connectivity = ConnectivityService();
+  DateTime _focusedDay = DateTime.now();
+  DateTime? _selectedDay;
 
-  DateTime _focusedMonth = DateTime.now();
-  DateTime _selectedDay = DateTime.now();
-  Map<String, List<Task>> _tasksByDate = {}; // key = "yyyy-MM-dd"
-  bool _isLoading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadAllTasks();
-  }
-
-  String _dateKey(DateTime d) =>
-      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
-  Future<void> _loadAllTasks() async {
-    final user = context.read<AuthProvider>().currentUser;
-    if (user == null) return;
-
-    setState(() => _isLoading = true);
-
-    final online = await _connectivity.isOnline();
-    List<Task> allTasks = [];
-
-    if (online) {
-      try {
-        final snapshot = await _firestore
-            .collection('tasks')
-            .where('userId', isEqualTo: user.id)
-            .get();
-        allTasks = snapshot.docs.map((d) => _taskFromFirestore(d)).toList();
-        for (final t in allTasks) {
-          await _db.insertTask(t);
-        }
-      } catch (_) {
-        allTasks = await _db.getTasks(user.id);
-      }
-    } else {
-      allTasks = await _db.getTasks(user.id);
-    }
-
-    // Group tasks by date key
-    final Map<String, List<Task>> grouped = {};
-    for (final task in allTasks) {
-      final key = _dateKey(task.dueDate);
-      grouped.putIfAbsent(key, () => []).add(task);
-    }
-
-    setState(() {
-      _tasksByDate = grouped;
-      _isLoading = false;
-    });
-  }
-
-  Task _taskFromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return Task(
-      id: doc.id,
-      title: data['title'] ?? '',
-      description: data['description'] ?? '',
-      courseId: data['courseId'] ?? '',
-      courseName: data['courseName'] ?? '',
-      dueDate: (data['dueDate'] as Timestamp).toDate(),
-      priority: data['priority'] ?? 'low',
-      isCompleted: data['isCompleted'] ?? false,
-      userId: data['userId'] ?? '',
+  Map<DateTime, List<Task>> _groupTasks(List<Task> tasks) {
+    final events = LinkedHashMap<DateTime, List<Task>>(
+      equals: isSameDay,
+      hashCode: _hashCode,
     );
-  }
-
-  List<Task> get _selectedDayTasks =>
-      _tasksByDate[_dateKey(_selectedDay)] ?? [];
-
-  // Build the calendar grid
-  List<DateTime?> _buildCalendarDays() {
-    final firstDay = DateTime(_focusedMonth.year, _focusedMonth.month, 1);
-    final lastDay = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 0);
-    final startWeekday = firstDay.weekday % 7; // 0=Sun
-    final days = <DateTime?>[];
-
-    // Pad with nulls for days before month starts
-    for (int i = 0; i < startWeekday; i++) {
-      days.add(null);
+    for (final task in tasks) {
+      final day = DateTime(task.dueDate.year, task.dueDate.month, task.dueDate.day);
+      events.putIfAbsent(day, () => []).add(task);
     }
-    for (int d = 1; d <= lastDay.day; d++) {
-      days.add(DateTime(_focusedMonth.year, _focusedMonth.month, d));
-    }
-    return days;
+    return events;
   }
 
-  bool _isToday(DateTime d) {
-    final now = DateTime.now();
-    return d.year == now.year && d.month == now.month && d.day == now.day;
-  }
+  int _hashCode(DateTime key) => key.day * 1000000 + key.month * 10000 + key.year;
 
-  bool _isSelected(DateTime d) =>
-      d.year == _selectedDay.year &&
-          d.month == _selectedDay.month &&
-          d.day == _selectedDay.day;
-
-  String _monthName(int m) {
-    const names = [
-      '', 'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    return names[m];
+  List<Task> _getEventsForDay(DateTime day, Map<DateTime, List<Task>> events) {
+    return events[day] ?? [];
   }
 
   String _formatTaskTime(Task task) {
@@ -170,306 +80,186 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = context.watch<AuthProvider>().currentUser;
-    final name = user?.name.split(' ').first ?? 'User';
-    final calDays = _buildCalendarDays();
+    final taskProvider = context.watch<TaskProvider>();
+    final events = _groupTasks(taskProvider.tasks);
+    final selectedDay = _selectedDay ?? DateTime.now();
+    final selectedTasks = _getEventsForDay(selectedDay, events);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       body: SafeArea(
-        child: _isLoading
+        child: taskProvider.isLoading
             ? const Center(child: CircularProgressIndicator())
             : RefreshIndicator(
-          onRefresh: _loadAllTasks,
-          child: CustomScrollView(
-            slivers: [
-              // ── Header ──────────────────────────────────
-              SliverToBoxAdapter(
-                child: Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 16),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.menu,
-                            color: Color(0xFF4361EE)),
-                        onPressed: () {},
-                      ),
-                      const SizedBox(width: 4),
-                      const Expanded(
-                        child: Text(
-                          'Calendar',
-                          style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1A1A2E)),
-                        ),
-                      ),
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor: const Color(0xFF4361EE),
-                        child: Text(
-                          name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // ── Calendar Card ────────────────────────────
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4))
-                      ],
-                    ),
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      children: [
-                        // Month navigation
-                        Row(
-                          mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
+                onRefresh: () => context.read<TaskProvider>().loadTasks(),
+                child: CustomScrollView(
+                  slivers: [
+                    // ── Header ──────────────────────────────────
+                    SliverToBoxAdapter(
+                      child: Container(
+                        color: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 16),
+                        child: Row(
                           children: [
-                            Text(
-                              '${_monthName(_focusedMonth.month)} ${_focusedMonth.year}',
-                              style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold),
+                            IconButton(
+                              icon: const Icon(Icons.menu,
+                                  color: Color(0xFF4361EE)),
+                              onPressed: () {},
                             ),
-                            Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(
-                                      Icons.chevron_left,
-                                      color: Color(0xFF4361EE)),
-                                  onPressed: () => setState(() {
-                                    _focusedMonth = DateTime(
-                                        _focusedMonth.year,
-                                        _focusedMonth.month - 1);
-                                  }),
-                                ),
-                                IconButton(
-                                  icon: const Icon(
-                                      Icons.chevron_right,
-                                      color: Color(0xFF4361EE)),
-                                  onPressed: () => setState(() {
-                                    _focusedMonth = DateTime(
-                                        _focusedMonth.year,
-                                        _focusedMonth.month + 1);
-                                  }),
-                                ),
-                              ],
-                            )
+                            const SizedBox(width: 4),
+                            const Expanded(
+                              child: Text(
+                                'Calendar',
+                                style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1A1A2E)),
+                              ),
+                            ),
                           ],
                         ),
-                        const SizedBox(height: 12),
-
-                        // Day-of-week headers
-                        Row(
-                          children: ['S', 'M', 'T', 'W', 'T', 'F', 'S']
-                              .map((d) => Expanded(
-                            child: Center(
-                              child: Text(d,
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color:
-                                      Colors.grey.shade500)),
-                            ),
-                          ))
-                              .toList(),
-                        ),
-                        const SizedBox(height: 8),
-
-                        // Calendar grid
-                        GridView.builder(
-                          shrinkWrap: true,
-                          physics:
-                          const NeverScrollableScrollPhysics(),
-                          gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 7,
-                            childAspectRatio: 1,
-                          ),
-                          itemCount: calDays.length,
-                          itemBuilder: (context, i) {
-                            final day = calDays[i];
-                            if (day == null) return const SizedBox();
-
-                            final hasTask =
-                                (_tasksByDate[_dateKey(day)] ?? [])
-                                    .isNotEmpty;
-                            final taskDots =
-                                _tasksByDate[_dateKey(day)] ?? [];
-                            final isSelected = _isSelected(day);
-                            final isToday = _isToday(day);
-
-                            return GestureDetector(
-                              onTap: () =>
-                                  setState(() => _selectedDay = day),
-                              child: Column(
-                                mainAxisAlignment:
-                                MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    width: 34,
-                                    height: 34,
-                                    decoration: BoxDecoration(
-                                      color: isSelected
-                                          ? const Color(0xFF4361EE)
-                                          : Colors.transparent,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        '${day.day}',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: isToday || isSelected
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                          color: isSelected
-                                              ? Colors.white
-                                              : (isToday
-                                              ? const Color(
-                                              0xFF4361EE)
-                                              : const Color(
-                                              0xFF1A1A2E)),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  // Task dots
-                                  if (hasTask)
-                                    Row(
-                                      mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                      children: taskDots
-                                          .take(3)
-                                          .map((t) => Container(
-                                        width: 5,
-                                        height: 5,
-                                        margin: const EdgeInsets
-                                            .symmetric(
-                                            horizontal: 1),
-                                        decoration: BoxDecoration(
-                                          color:
-                                          t.priorityColor,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ))
-                                          .toList(),
-                                    ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // ── Tasks for selected day ───────────────────
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Tasks for ${_monthName(_selectedDay.month).substring(0, 3)} ${_selectedDay.day}',
-                        style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold),
                       ),
-                      if (_selectedDayTasks.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 4),
+                    ),
+
+                    // ── Calendar Card ────────────────────────────
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Container(
                           decoration: BoxDecoration(
-                            color: const Color(0xFFEEF2FF),
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                  color: Colors.black.withOpacity(0.06),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4))
+                            ],
                           ),
-                          child: Text(
-                            '${_selectedDayTasks.length} Tasks',
-                            style: const TextStyle(
+                          padding: const EdgeInsets.all(16),
+                          child: TableCalendar<Task>(
+                            firstDay: DateTime.utc(2020, 1, 1),
+                            lastDay: DateTime.utc(2035, 12, 31),
+                            focusedDay: _focusedDay,
+                            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+                            calendarFormat: CalendarFormat.month,
+                            eventLoader: (day) => _getEventsForDay(day, events),
+                            onDaySelected: (selectedDay, focusedDay) {
+                              setState(() {
+                                _selectedDay = selectedDay;
+                                _focusedDay = focusedDay;
+                              });
+                            },
+                            calendarStyle: CalendarStyle(
+                              todayDecoration: BoxDecoration(
+                                color: const Color(0xFF4361EE).withOpacity(0.2),
+                                shape: BoxShape.circle,
+                              ),
+                              selectedDecoration: const BoxDecoration(
                                 color: Color(0xFF4361EE),
-                                fontWeight: FontWeight.w500),
+                                shape: BoxShape.circle,
+                              ),
+                              markerDecoration: const BoxDecoration(
+                                color: Color(0xFFF72585),
+                                shape: BoxShape.circle,
+                              ),
+                              markersMaxCount: 3,
+                            ),
+                            headerStyle: const HeaderStyle(
+                              formatButtonVisible: false,
+                              titleCentered: true,
+                            ),
                           ),
                         ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SliverToBoxAdapter(child: SizedBox(height: 12)),
-
-              _selectedDayTasks.isEmpty
-                  ? SliverToBoxAdapter(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      children: [
-                        Icon(Icons.event_available,
-                            size: 48,
-                            color: Colors.grey.shade300),
-                        const SizedBox(height: 8),
-                        Text('No tasks for this day',
-                            style: TextStyle(
-                                color: Colors.grey.shade500)),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-                  : SliverList(
-                delegate: SliverChildBuilderDelegate(
-                      (context, i) {
-                    final task = _selectedDayTasks[i];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 6),
-                      child: _CalendarTaskCard(
-                        task: task,
-                        timeLabel: _formatTaskTime(task),
-                        icon: _courseIcon(task.courseName),
-                        iconColor:
-                        _courseIconColor(task.courseName),
-                        onTap: () =>
-                            context.push('/task/${task.id}'),
                       ),
-                    );
-                  },
-                  childCount: _selectedDayTasks.length,
+                    ),
+
+                    // ── Tasks for selected day ───────────────────
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Tasks for ${selectedDay.month}/${selectedDay.day}',
+                              style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                            if (selectedTasks.isNotEmpty)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEEF2FF),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  '${selectedTasks.length} Tasks',
+                                  style: const TextStyle(
+                                      color: Color(0xFF4361EE),
+                                      fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+
+                    selectedTasks.isEmpty
+                        ? SliverToBoxAdapter(
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  children: [
+                                    Icon(Icons.event_available,
+                                        size: 48,
+                                        color: Colors.grey.shade300),
+                                    const SizedBox(height: 8),
+                                    Text('No tasks for this day',
+                                        style: TextStyle(
+                                            color: Colors.grey.shade500)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          )
+                        : SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (context, i) {
+                                final task = selectedTasks[i];
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 20, vertical: 6),
+                                  child: _CalendarTaskCard(
+                                    task: task,
+                                    timeLabel: _formatTaskTime(task),
+                                    icon: _courseIcon(task.courseName),
+                                    iconColor:
+                                        _courseIconColor(task.courseName),
+                                    onTap: () =>
+                                        context.push('/task/${task.id}'),
+                                  ),
+                                );
+                              },
+                              childCount: selectedTasks.length,
+                            ),
+                          ),
+
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  ],
                 ),
               ),
-
-              const SliverToBoxAdapter(child: SizedBox(height: 100)),
-            ],
-          ),
-        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           await context.push('/add-task');
-          _loadAllTasks();
+          await context.read<TaskProvider>().loadTasks();
         },
         backgroundColor: const Color(0xFF4361EE),
         child: const Icon(Icons.add, color: Colors.white, size: 28),

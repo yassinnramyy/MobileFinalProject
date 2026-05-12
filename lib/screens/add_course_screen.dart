@@ -1,12 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:uuid/uuid.dart';
 import 'package:provider/provider.dart';
 
-import '../providers/auth_provider.dart';
-import '../data/local/database_helper.dart';
-import '../models/course_model.dart';
-import '../core/connectivity_service.dart';
+import '../providers/task_provider.dart';
 import 'home_screen.dart';
 
 class AddCourseScreen extends StatefulWidget {
@@ -18,9 +13,6 @@ class AddCourseScreen extends StatefulWidget {
 
 class _AddCourseScreenState extends State<AddCourseScreen> {
   final _nameController = TextEditingController();
-  final _db = DatabaseHelper.instance;
-  final _firestore = FirebaseFirestore.instance;
-  final _connectivity = ConnectivityService();
 
   final _colors = [
     const Color(0xFF4361EE),
@@ -36,45 +28,6 @@ class _AddCourseScreenState extends State<AddCourseScreen> {
   int _selectedColorIndex = 0;
   int _selectedIconIndex = 0;
   bool _isSaving = false;
-  List<Course> _recent = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadRecent();
-  }
-
-  Future<void> _loadRecent() async {
-    final user = context.read<AuthProvider>().currentUser;
-    if (user == null) return;
-    final online = await _connectivity.isOnline();
-    try {
-      if (online) {
-        final snap = await _firestore
-            .collection('courses')
-            .where('userId', isEqualTo: user.id)
-            .orderBy('name')
-            .get();
-        final list = snap.docs
-            .map((d) => Course.fromMap({
-                  'id': d.id,
-                  'name': d.data()['name'] ?? '',
-                  'color': d.data()['color'] ?? 0xFF4361EE,
-                  'icon': d.data()['icon'] ?? 'book',
-                  'userId': d.data()['userId'] ?? '',
-                  'taskCount': d.data()['taskCount'] ?? 0,
-                }))
-            .toList();
-        setState(() => _recent = list);
-      } else {
-        final local = await _db.getCourses(user.id);
-        setState(() => _recent = local);
-      }
-    } catch (_) {
-      final local = await _db.getCourses(user.id);
-      setState(() => _recent = local);
-    }
-  }
 
   IconData _iconFor(String key) {
     switch (key) {
@@ -96,36 +49,18 @@ class _AddCourseScreenState extends State<AddCourseScreen> {
   }
 
   Future<void> _saveCourse() async {
-    final user = context.read<AuthProvider>().currentUser;
-    if (user == null) return;
     if (_nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter course name')));
       return;
     }
     if (!mounted) return;
     setState(() => _isSaving = true);
-    final id = const Uuid().v4();
-    final course = Course(
-      id: id,
-      name: _nameController.text.trim(),
-      color: _colors[_selectedColorIndex].toARGB32(),
-      icon: _icons[_selectedIconIndex],
-      userId: user.id,
-    );
 
-    await _db.insertCourse(course);
-    final online = await _connectivity.isOnline();
-    if (online) {
-      try {
-        await _firestore.collection('courses').doc(id).set({
-          'name': course.name,
-          'color': course.color,
-          'icon': course.icon,
-          'userId': course.userId,
-          'taskCount': course.taskCount,
-        });
-      } catch (_) {}
-    }
+    await context.read<TaskProvider>().addCourse(
+          name: _nameController.text.trim(),
+          color: _colors[_selectedColorIndex].toARGB32(),
+          icon: _icons[_selectedIconIndex],
+        );
 
     if (!mounted) return;
     setState(() => _isSaving = false);
@@ -134,6 +69,8 @@ class _AddCourseScreenState extends State<AddCourseScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final recent = context.watch<TaskProvider>().courses;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       appBar: AppBar(
@@ -221,7 +158,7 @@ class _AddCourseScreenState extends State<AddCourseScreen> {
               const Text('Recent Courses', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Column(
-                children: _recent.map((c) {
+                children: recent.map((c) {
                   return Container(
                     margin: const EdgeInsets.only(bottom: 10),
                     padding: const EdgeInsets.all(12),
@@ -244,14 +181,7 @@ class _AddCourseScreenState extends State<AddCourseScreen> {
                           itemBuilder: (_) => [const PopupMenuItem(value: 0, child: Text('Delete'))],
                           onSelected: (v) async {
                             if (v == 0) {
-                              await _db.deleteCourse(c.id);
-                              final online = await _connectivity.isOnline();
-                              if (online) {
-                                try {
-                                  await _firestore.collection('courses').doc(c.id).delete();
-                                } catch (_) {}
-                              }
-                              _loadRecent();
+                              await context.read<TaskProvider>().deleteCourse(c.id);
                             }
                           },
                         )

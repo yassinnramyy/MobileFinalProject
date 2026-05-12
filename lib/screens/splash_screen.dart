@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/task_provider.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -39,7 +40,12 @@ class _SplashScreenState extends State<SplashScreen>
     Future.delayed(const Duration(seconds: 3), () async {
       if (mounted) {
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        await authProvider.checkCurrentUser(); // ← wait for this to finish
+        final taskProvider = Provider.of<TaskProvider>(context, listen: false);
+        await authProvider.checkCurrentUser();
+        final userId = authProvider.currentUser?.id;
+        if (userId != null) {
+          await taskProvider.init(userId);
+        }
         if (mounted) _checkAuthAndNavigate();
       }
     });
